@@ -21,7 +21,9 @@ use alloc::vec::Vec;
 use lazy_static::*;
 pub use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
-
+use crate::config::{MAX_SYSCALL_NUM};
+use crate::syscall::TaskInfo;
+use crate::timer::get_time_us;
 pub use context::TaskContext;
 
 /// The task manager, where all the tasks are managed.
@@ -79,6 +81,7 @@ impl TaskManager {
         let mut inner = self.inner.exclusive_access();
         let next_task = &mut inner.tasks[0];
         next_task.task_status = TaskStatus::Running;
+        next_task.start_time = get_time_us();
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
         drop(inner);
         let mut _unused = TaskContext::zero_init();
@@ -134,6 +137,9 @@ impl TaskManager {
             let mut inner = self.inner.exclusive_access();
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
+            if inner.tasks[next].start_time == 0 {
+                inner.tasks[next].start_time = get_time_us();
+            }
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
@@ -146,6 +152,26 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+    pub fn update_syscall_times(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times[syscall_id] += 1;
+    }
+    
+    fn get_current_task(&self) -> TaskInfo {
+        let inner = self.inner.exclusive_access();
+        let current_task = &inner.tasks[inner.current_task];
+        let mut ti = TaskInfo {
+            status: TaskStatus::UnInit,
+            syscall_times: [0; MAX_SYSCALL_NUM],
+            time: 0
+        };
+        ti.status = current_task.task_status;
+        ti.syscall_times.copy_from_slice(&current_task.syscall_times[..]);
+        ti.time = (get_time_us() - current_task.start_time) / 1000;
+        ti
     }
 }
 
@@ -191,3 +217,13 @@ pub fn current_user_token() -> usize {
 pub fn current_trap_cx() -> &'static mut TrapContext {
     TASK_MANAGER.get_current_trap_cx()
 }
+
+pub fn current_task() -> TaskInfo {
+    TASK_MANAGER.get_current_task()
+}
+
+
+pub fn update_syscall_times(syscall_id: usize) {
+    TASK_MANAGER.update_syscall_times(syscall_id)
+}
+

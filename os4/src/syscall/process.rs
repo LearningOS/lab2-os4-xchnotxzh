@@ -1,8 +1,9 @@
 //! Process management syscalls
 
 use crate::config::MAX_SYSCALL_NUM;
-use crate::task::{exit_current_and_run_next, suspend_current_and_run_next, TaskStatus};
+use crate::task::{exit_current_and_run_next, current_task, suspend_current_and_run_next, TaskStatus, current_user_token};
 use crate::timer::get_time_us;
+use crate::mm::{copyout};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -32,13 +33,12 @@ pub fn sys_yield() -> isize {
 
 // YOUR JOB: 引入虚地址后重写 sys_get_time
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    let _us = get_time_us();
-    // unsafe {
-    //     *ts = TimeVal {
-    //         sec: us / 1_000_000,
-    //         usec: us % 1_000_000,
-    //     };
-    // }
+    let us = get_time_us();
+    let tmp = TimeVal {
+        sec: us / 1_000_000,
+        usec: us % 1_000_000,
+    };
+    copyout(current_user_token(), _ts as usize, &tmp as *const TimeVal as *const u8, core::mem::size_of::<TimeVal>());
     0
 }
 
@@ -58,5 +58,7 @@ pub fn sys_munmap(_start: usize, _len: usize) -> isize {
 
 // YOUR JOB: 引入虚地址后重写 sys_task_info
 pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
-    -1
+    let task = current_task();
+    copyout(current_user_token(), ti as usize, &task as *const TaskInfo as *const u8, core::mem::size_of::<TaskInfo>());
+    0
 }
