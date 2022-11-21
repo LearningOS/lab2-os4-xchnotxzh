@@ -133,34 +133,6 @@ impl PageTable {
     }
 }
 
-
-
-// /// test and return the res if the type is contained in a single page
-// /// 返回能访问到物理数据的引用
-// pub fn try_translate_small_type<T>(token: usize, ptr: *const T) -> Option<&'static mut T> {
-//     let page_table = PageTable::from_token(token);
-//     let va = VirtAddr::from(ptr as usize);
-//     let start_offset = va.page_offset();
-//     if start_offset + size_of::<T>() > PAGE_SIZE {
-//         None
-//     } else {
-//         let ppn = page_table.translate(va.floor()).unwrap().ppn();
-//         let res = PhysAddr::from(ppn).add(start_offset);
-//         unsafe { Some((res.0 as *mut T).as_mut().unwrap()) }
-//     }
-// }
-
-// /// for type so large that spans multiple pages
-// /// or even trickier, small type that cross border between 2 pages, unlikely
-// /// 返回值 -- 物理字节数组引用的向量
-// pub fn translated_large_type<T>(token: usize, ptr: *const T) -> Vec<& 'static mut [u8]> {
-//     let ptr = ptr as *const u8;
-//     let size = size_of::<T>();
-//     translated_byte_buffer(token, ptr, size)
-// }
-
-
-
 /// translate a pointer to a mutable u8 Vec through page table
 pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&'static mut [u8]> {
     let page_table = PageTable::from_token(token);
@@ -184,25 +156,16 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
     v
 }
 
-// pub unsafe fn copy_type_into_bufs<T>(value: &T, buffers: Vec<&mut [u8]>) {
-//     let value = from_raw_parts(value as *const T as *const u8, size_of::<T>());
-//     let mut offset = 0;
-//     for buffer in buffers {
-//         let dst_len = buffer.len();    
-//         buffer.copy_from_slice(&value[offset..offset+dst_len]);
-//         offset += dst_len;
-//     }
-// }
-
-// 复制内核空间数据到用户空间数据
-// 参数 -- token: 用户地址空间token，dst_user_va：用户空间目标地址，内核空间源数据地址，len：数据字节长度
-pub fn copyout(token: usize, dst_user_va: usize, src: *const u8, len: usize) {
+/// 复制内核空间地址数据到用户空间地址
+/// 参数 -- token: 用户地址空间token，dst_user_va：用户空间目标地址，内核空间源数据地址，len：数据字节长度
+pub fn copy_kernel_to_user(token: usize, kernel_src_va: *const u8, user_dst_va: usize, len: usize) {
+    // 用户空间采用Framed映射，内核空间采用恒等映射，所以只需要翻译用户空间地址
     let page_table = PageTable::from_token(token);
-    let start_va = VirtAddr::from(dst_user_va);
-    let start_vpn = start_va.floor();
-    let start_ppn = page_table.translate(start_vpn).unwrap().ppn();
-    let dst = &mut start_ppn.get_bytes_array()[start_va.page_offset()..start_va.page_offset() + len];
+    let user_start_va = VirtAddr::from(user_dst_va);
+    let user_start_vpn = user_start_va.floor();
+    let user_start_ppn = page_table.translate(user_start_vpn).unwrap().ppn();
+    let user_dst_pa = &mut user_start_ppn.get_bytes_array()[user_start_va.page_offset()..user_start_va.page_offset() + len];
     unsafe {
-        dst.copy_from_slice(core::slice::from_raw_parts(src, len));
+        user_dst_pa.copy_from_slice(core::slice::from_raw_parts(kernel_src_va, len));
     };
 }

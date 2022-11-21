@@ -13,7 +13,7 @@ mod context;
 mod switch;
 #[allow(clippy::module_inception)]
 mod task;
-
+use crate::mm::{VirtAddr, MapPermission};
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
@@ -153,12 +153,6 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
-
-    pub fn update_syscall_times(&self, syscall_id: usize) {
-        let mut inner = self.inner.exclusive_access();
-        let current = inner.current_task;
-        inner.tasks[current].syscall_times[syscall_id] += 1;
-    }
     
     fn get_current_task(&self) -> TaskInfo {
         let inner = self.inner.exclusive_access();
@@ -173,6 +167,53 @@ impl TaskManager {
         ti.time = (get_time_us() - current_task.start_time) / 1000;
         ti
     }
+
+    pub fn update_syscall_times(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times[syscall_id] += 1;
+    }
+
+    pub fn mmap(&self, start_va: VirtAddr, end_va: VirtAddr, port: usize) -> isize {
+        let mut inner = TASK_MANAGER.inner.exclusive_access();
+        let cur_task_id = inner.current_task;
+        let cur_task = &mut inner.tasks[cur_task_id];
+        let mem_set = &mut cur_task.memory_set;
+        let end_va = end_va.ceil().into();
+        if mem_set.conflict_with_range(start_va, end_va) {
+            return -1;
+        }
+        let mut perm = MapPermission::U;
+        if (port & (1 << 0)) != 0 {
+            perm |= MapPermission::R;
+        }
+        if (port & (1 << 1)) != 0 {
+            perm |= MapPermission::W;
+        }
+        if (port & (1 << 2)) != 0 {
+            perm |= MapPermission::X;
+        }
+        mem_set.insert_framed_area(
+            start_va,
+            end_va,
+            perm
+        );
+        info!("mmap: [{:#x}, {:#x}]", usize::from(start_va), usize::from(end_va));
+        0
+    }
+
+    pub fn munmap(&self, start_va: VirtAddr, end_va: VirtAddr) -> isize {
+        let mut inner = TASK_MANAGER.inner.exclusive_access();
+        let cur_task_id = inner.current_task;
+        let cur_task = &mut inner.tasks[cur_task_id];
+        let mem_set = &mut cur_task.memory_set;
+        let start_vn = start_va.floor();
+        let end_vn = end_va.ceil();
+        let ret = mem_set.unmap_area_by_exact_range(start_vn, end_vn);
+        info!("munmap: [{:#x}, {:#x}]", usize::from(start_vn), usize::from(end_vn));
+        ret
+    }
+
 }
 
 /// Run the first task in task list.
@@ -227,3 +268,11 @@ pub fn update_syscall_times(syscall_id: usize) {
     TASK_MANAGER.update_syscall_times(syscall_id)
 }
 
+
+pub fn mmap(start_va: VirtAddr, end_va: VirtAddr, port: usize) -> isize {
+    TASK_MANAGER.mmap(start_va, end_va, port)
+}
+
+pub fn munmap(start_va: VirtAddr, end_va: VirtAddr) -> isize {
+    TASK_MANAGER.munmap(start_va, end_va)
+}
